@@ -3,7 +3,8 @@
 #include <algorithm>
 #include <vector>
 #include <ctime>
-#include <queue>
+#include <thread>
+#include <mutex>
 
 const int NFLIGHTS = 303;
 const int NGATES = 69;
@@ -117,9 +118,7 @@ void sampling(int* matchings, const int *sizes, float* probs, int* assign) {
 	}
 }
 
-int greedy_search(int* ports, int* sizes, int* timeidx, 
-                  int K, int *ans, int *assign, int *matchings=NULL,
-				  int *matchsize=NULL) {
+int greedy_search(int* ports, int* sizes, int* timeidx, int K, int *ans, int *assign) {
 	typedef pair<int*, int> info_t;
 
 	Mat<int> timers(timeidx, NFLIGHTS, 2);
@@ -151,6 +150,51 @@ int greedy_search(int* ports, int* sizes, int* timeidx,
 
 	ans[0] = res;
 	ans[1] = usage;
+}
+
+void greedy_entry(int *matching, const int *matchsize, float *probs, 
+                  int *assign, int *timeidx, int *ans, int threadIdx=0) {
+	sampling(matching, matchsize, probs, assign);
+	int psize[69];
+	int cnt = 0, maxlen = 0;
+	vector<vector<int>> ports(69, vector<int>());
+	for(int i=0; i<69; i++) {
+		psize[i] = 0;
+		for(int j=0; j<NFLIGHTS; j++) {
+			if(assign[j] == i) {
+				ports[i].push_back(j);
+				psize[i]++;
+			}
+		}
+		if(psize[i] > maxlen)
+			maxlen = psize[i];
+	}
+	for(auto& vec : ports) {
+		while(vec.size() < maxlen) {
+			vec.push_back(-1);
+		}
+	}
+	for(int i=1; i<ports.size(); i++) {
+		ports[0].insert(ports[0].end(), ports[i].begin(), ports[i].end());
+	}
+	greedy_search(ports[0].data(), psize, timeidx, maxlen, ans + 2 * threadIdx, assign);
+}
+
+/**
+** Parallel implementation of the ant colony algorithm
+** ans: shape (32 * 2)
+**/
+void asynchronized(int *matching, const int *matchsize, float *probs,
+                   int *assign, int *timeidx, int *ans, int threadIdx=0) {
+	std::vector<std::thread> threads;
+	for(int i=0; i<32; i++) {
+		threads.push_back(::thread(greedy_entry, matching, matchsize, probs, 
+		                           assign, timeidx, ans, i));
+	}
+	for(auto& elem : threads) {
+		elem.join();
+	}
+	
 }
 
 
